@@ -1,5 +1,7 @@
 # PyQt5 LLM Chat & Data Analysis GUI
 
+> For a detailed description of the project’s goals, architecture, and deliverables, see [Project description.md](./Project%20description.md).
+
 ## Overview
 
 This application is an interactive chat-based GUI for data analysis, powered by PyQt5 and a local LLM (Large Language Model) backend. It allows users to:
@@ -62,7 +64,9 @@ This application is an interactive chat-based GUI for data analysis, powered by 
    pip install -r requirements.txt
    ```
 
-3. **Ensure Ollama or your LLM backend is running locally**
+3. **Set up your local LLM backend (e.g., Ollama)**
+   - See [Set Up Ollama.md](./Set%20Up%20Ollama.md) for platform-specific installation and setup instructions.
+
 4. **Run the application:**
 
    ```bash
