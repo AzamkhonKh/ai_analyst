@@ -7,12 +7,12 @@ class ChatDisplayPanel(QWidget):
         layout = QVBoxLayout(self)
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
-        self.chat_display.setFont(QFont("Arial", 15))
+        self.chat_display.setFont(QFont("Arial", 24))
         layout.addWidget(self.chat_display)
 
     def append_message(self, sender: str, message: str):
         message_newline = message.replace("\n", '<br>')
-        formatted_message = f"<b>{sender}:</b><br>{message_newline}<br><br>"
+        formatted_message = f"<b>{sender}:</b> {message_newline}<br>"
         self.chat_display.append(formatted_message)
         self.chat_display.ensureCursorVisible() # Auto-scroll
 

@@ -24,7 +24,6 @@ class ChatWindow(QMainWindow):
         self.llm_handler.moveToThread(self.llm_thread)
         self.llm_handler.response_ready.connect(self.handle_response)
         self.llm_handler.error_occurred.connect(self.show_error)
-        self.llm_handler.file_processed.connect(self.notify_file_processed)
         self.llm_handler.csv_analyzed.connect(self.display_csv_analysis)
         self.llm_thread.start()
 
@@ -74,13 +73,6 @@ class ChatWindow(QMainWindow):
         self.chat_display_panel.append_message("LLM", response_text)
         self.toggle_inputs(True)
         self.update_status("Ready.")
-
-    def notify_file_processed(self, message: str):
-        self.toggle_inputs(True)
-        self.update_status("Ready.")
-        QMessageBox.information(self, "File Loaded", message)
-        self.chat_display_panel.append_message("System", message)
-        self.input_panel.setPlaceholderText("Type your analysis request for the uploaded file...")
 
     def display_csv_analysis(self, analysis_text: str, image_bytes: bytes):
         message_html = analysis_text
