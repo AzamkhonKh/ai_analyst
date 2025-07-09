@@ -31,7 +31,13 @@ class ChatWindow(QMainWindow):
         self.llm_handler.moveToThread(self.llm_thread)
         self.llm_handler.response_ready.connect(self.handle_response)
         self.llm_handler.error_occurred.connect(self.show_error)
+        self.llm_handler.file_processed.connect(self.handle_file_processed)
         self.llm_thread.start()
+
+    def handle_file_processed(self, msg: str):
+        self.toggle_inputs(True)
+        self.chat_display_panel.append_message("System", msg)
+        self.update_status("File loaded and analyzed.")
 
     def init_ui(self):
         from PyQt5.QtWidgets import QComboBox, QLabel, QHBoxLayout as QHBox
@@ -100,6 +106,7 @@ class ChatWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open File", "", "Text/CSV Files (*.txt *.csv);;All Files (*)", options=options)
         if file_path:
+            self.toggle_inputs(False)
             self.update_status(f"Processing file: {file_path}...")
             # Share file path and current room with LLM handler
             self.llm_handler.process_file(file_path, self.current_room)

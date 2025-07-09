@@ -40,5 +40,5 @@ def histogram_plot(df: pd.DataFrame, feature: str) ->  str:
     b64_data = base64.b64encode(img_bytes).decode('utf-8')
     img_tag = f'<br><img src="data:image/png;base64,{b64_data}" style="max-width: 400px; max-height: 300px;"/>'
     html = analysis + img_tag
-    return analysis, img_bytes, html
+    return html
 

@@ -138,8 +138,14 @@ Respond ONLY with the JSON object, no extra text.
                 self.response_ready.emit(
                     f"Plot type '{plot_type}' is not supported.")
                 return
-            analysis, img_bytes, html = plot_func(df, feature, file_path)
-            self.csv_analyzed.emit(html, img_bytes)
+            # Only pass file_path if the plot function supports it
+            import inspect
+            params = inspect.signature(plot_func).parameters
+            if len(params) == 3:
+                html = plot_func(df, feature, file_path)
+            else:
+                html = plot_func(df, feature)
+            self.response_ready.emit(html)
         except Exception as e:
             self.error_occurred.emit(f"Plotting Error: {e}")
     """
@@ -199,16 +205,35 @@ Respond ONLY with the JSON object, no extra text.
     @pyqtSlot(str, str)
     def process_file(self, file_path: str, room_name: str):
         """
-        Loads a text or CSV file, splits/analyzes it, and stores or emits results.
+        Loads a text, CSV, or Excel file, stores DataFrame, and emits detected headers and shape.
         """
         try:
             file_name = os.path.basename(file_path)
             self.emit_status(f"Processing file: {file_name}...")
 
-            self.file_processed.emit(
-                f"File '{file_name}' is now context for this room.")
+            ext = os.path.splitext(file_name)[1].lower()
+            if ext in [".csv", ".txt"]:
+                df = pd.read_csv(file_path)
+            elif ext in [".xls", ".xlsx"]:
+                df = pd.read_excel(file_path)
+            else:
+                self.error_occurred.emit(f"Unsupported file type: {ext}")
+                return
+
+            self.dataframes[room_name] = df
+            headers = list(df.columns)
+            shape = df.shape
+
+            msg = (
+                f"File '{file_name}' loaded successfully!\n"
+                f"Detected columns: {headers}\n"
+                f"Dataset shape: {shape[0]} rows × {shape[1]} columns."
+            )
+            self.file_processed.emit(msg)
         except Exception as e:
-            self.error_occurred.emit(f"File Processing Error: {e}")
+            tb = traceback.format_exc()
+            self.error_occurred.emit(
+                f"File Processing Error: {e}\nFile: {__file__}\nTraceback:\n{tb}")
 
     @pyqtSlot(str, str)
     def get_response(self, user_input: str, room_name: str):
