@@ -31,7 +31,6 @@ class ChatWindow(QMainWindow):
         self.llm_handler.moveToThread(self.llm_thread)
         self.llm_handler.response_ready.connect(self.handle_response)
         self.llm_handler.error_occurred.connect(self.show_error)
-        self.llm_handler.csv_analyzed.connect(self.display_csv_analysis)
         self.llm_thread.start()
 
     def init_ui(self):
@@ -101,7 +100,6 @@ class ChatWindow(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open File", "", "Text/CSV Files (*.txt *.csv);;All Files (*)", options=options)
         if file_path:
-            self.toggle_inputs(False)
             self.update_status(f"Processing file: {file_path}...")
             # Share file path and current room with LLM handler
             self.llm_handler.process_file(file_path, self.current_room)
@@ -115,21 +113,9 @@ class ChatWindow(QMainWindow):
         self.toggle_inputs(True)
         self.update_status("Ready.")
 
-    def display_csv_analysis(self, analysis_text: str, image_bytes: bytes):
-        message_html = analysis_text
-        if image_bytes:
-            b64_data = base64.b64encode(image_bytes).decode('utf-8')
-            img_tag = f'<br><img src=\"data:image/png;base64,{b64_data}\" style=\"max-width: 400px; max-height: 300px;\"/>'
-            message_html += img_tag
-        self.chat_display_panel.append_message("LLM", message_html)
-        self.toggle_inputs(True)
-        self.update_status("CSV analysis displayed.")
-
     def on_room_deleted(self, room_name: str):
         if room_name in self.llm_handler.chat_histories:
             del self.llm_handler.chat_histories[room_name]
-        if room_name in self.llm_handler.retrievers:
-            del self.llm_handler.retrievers[room_name]
 
     def on_room_added(self, room_name: str):
         pass
@@ -142,8 +128,6 @@ class ChatWindow(QMainWindow):
         for msg in history.messages:
             sender = "You" if msg.type == "human" else "LLM"
             self.chat_display_panel.append_message(sender, msg.content)
-        if self.current_room in self.llm_handler.retrievers:
-            self.update_status(f"Ready. Context file is active in this room.")
         else:
             self.update_status("Ready.")
 

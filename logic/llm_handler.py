@@ -1,24 +1,147 @@
+import traceback
 import os
+import json
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 # LangChain Imports
-from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_community.vectorstores import FAISS
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 
-from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_ollama import ChatOllama
 from langchain_core.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 import pandas as pd
-import matplotlib.pyplot as plt
-from io import BytesIO
+# Import plotting interface and registry from plotting.py
+from .plotting import PlotRegistry, histogram_plot
 
 
 class LLMHandler(QObject):
+
+    def get_response_with_context(self, user_input: str, room_name: str, file_path: str = None):
+        """
+        Handles user input with extra context (room, file). Decides whether to answer with a message or perform an action (e.g., plotting, modeling).
+        """
+        try:
+            self.emit_status("Thinking (with context and file)...")
+            # Improved prompt for LLM intent and action detection
+            prompt_value = (
+                f"You are an expert assistant for a data analysis app.\n"
+                f"User prompt: {user_input}\n"
+            )
+            if file_path:
+                prompt_value += f"A file named '{os.path.basename(file_path)}' is available.\n"
+            prompt_value += (
+                """
+Your task is to determine the user's intent and respond ONLY with a JSON object in the following format:
+{
+  "action": "plot" | "ml_model" | "chat",
+  "plot_type": <type, if action is plot, e.g. 'histogram', 'scatter', or null>,
+  "features": [<list of feature/column names, if relevant, else empty list>],
+  "model_type": <type, if action is ml_model, e.g. 'logistic_regression', 'decision_tree', or null>,
+  "explanation": <short explanation of your reasoning>
+}
+
+Actions:
+- If the user wants to visualize data (e.g., plot, diagram, chart), set action to "plot" and specify plot_type and features.
+- If the user wants to create, train, or use a machine learning model, set action to "ml_model" and specify model_type and features.
+- If the user just wants to chat or ask a question, set action to "chat" and leave other fields null or empty.
+
+Examples:
+User: Show a histogram of column 'age'.
+Response: {"action": "plot", "plot_type": "histogram", "features": ["age"], "model_type": null, "explanation": "User requested a histogram plot of 'age'."}
+
+User: Train a decision tree to classify health status.
+Response: {"action": "ml_model", "plot_type": null, "features": ["health_status"], "model_type": "decision_tree", "explanation": "User wants to train a decision tree model for health status classification."}
+
+User: What is a neural network?
+Response: {"action": "chat", "plot_type": null, "features": [], "model_type": null, "explanation": "User is asking a general question."}
+
+Respond ONLY with the JSON object, no extra text.
+"""
+            )
+            # Use LLM to analyze intent
+            intent_response = self.llm.invoke(prompt_value)
+            self.emit_status(intent_response)
+            intent_text = intent_response.content if hasattr(
+                intent_response, 'content') else str(intent_response)
+
+            # Try to parse the LLM's response as JSON
+            try:
+                intent_json = json.loads(intent_text)
+            except Exception as e:
+                self.error_occurred.emit(
+                    f"Could not parse LLM intent as JSON: {e}\nRaw response: {intent_text}")
+                self.get_response(user_input, room_name)
+                return
+
+            action = intent_json.get("action")
+            plot_type = intent_json.get("plot_type")
+            features = intent_json.get("features") or []
+            model_type = intent_json.get("model_type")
+            explanation = intent_json.get("explanation")
+
+            # Handle plotting
+            if action == "plot":
+                if not file_path or room_name not in self.dataframes:
+                    self.response_ready.emit("No file loaded for plotting.")
+                    return
+                df = self.dataframes[room_name]
+                if not features or not plot_type:
+                    self.response_ready.emit(
+                        "Could not determine plot type or features. Please specify the column name and plot type.")
+                    return
+                # Only use the first feature for now (extend as needed)
+                feature = features[0] if isinstance(
+                    features, list) and features else features
+                self.handle_plot(plot_type, df, feature, file_path)
+                return
+
+            # Handle ML model creation/training
+            if action == "ml_model":
+                # Placeholder: implement ML model logic here
+                msg = f"[ML MODEL] Would create model '{model_type}' using features {features}. (Not yet implemented)"
+                self.response_ready.emit(msg)
+                return
+
+            # Handle chat/default
+            if action == "chat":
+                self.get_response(user_input, room_name)
+                return
+
+            # Fallback: unknown action
+            self.response_ready.emit(
+                f"Unknown action: {action}. Explanation: {explanation}")
+            return
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.error_occurred.emit(
+                f"LLM Action Error: {e}\nFile: {__file__}\nTraceback:\n{tb}")
+
+    def _extract_feature(self, user_input: str, lower_intent: str, df: pd.DataFrame) -> str:
+        """Extract feature/column name from user input or LLM intent."""
+        for col in df.columns:
+            if col.lower() in user_input.lower():
+                return col
+        for col in df.columns:
+            if col.lower() in lower_intent:
+                return col
+        return None
+
+    def handle_plot(self, plot_type: str, df: pd.DataFrame, feature: str, file_path: str):
+        """
+        Extensible plot handler using registry. Add new plot types by registering them.
+        """
+        try:
+            plot_func = self.plot_registry.get(plot_type)
+            if plot_func is None:
+                self.response_ready.emit(
+                    f"Plot type '{plot_type}' is not supported.")
+                return
+            analysis, img_bytes, html = plot_func(df, feature, file_path)
+            self.csv_analyzed.emit(html, img_bytes)
+        except Exception as e:
+            self.error_occurred.emit(f"Plotting Error: {e}")
     """
     Handles all LLM-related operations, including chat and document retrieval.
     Runs on a separate thread to avoid freezing the GUI.
@@ -31,40 +154,37 @@ class LLMHandler(QObject):
     def __init__(self, model_name="llama3.1:8b"):
         super().__init__()
         self.chat_histories = {}  # Store message history for each room
-        self.retrievers = {}     # Store document retrievers for each room
         self.dataframes = {}     # Store loaded DataFrames for each room
         self.model_name = model_name
+        self.plot_registry = PlotRegistry()
+        self.plot_registry.register("histogram", histogram_plot)
+        self.llm = None
+        self.rag_chain_with_history = None
+        self._init_llm_and_chain()
+
+    def _init_llm_and_chain(self):
+        """Initialize the LLM and the chat chain with message history."""
         try:
-            # --- Core LLM and Embeddings Setup ---
-            # Initialize the LLM
             self.llm = ChatOllama(
                 model=self.model_name,
                 temperature=0,
             )
-            # Initialize the embeddings model (for turning text into vectors)
-            self.embeddings = OllamaEmbeddings(model=self.model_name)
-
-            # --- RAG (Retrieval-Augmented Generation) Chain Setup ---
-            # This chain is for answering questions based on a loaded file.
-            rag_prompt = ChatPromptTemplate.from_messages([
+            prompt = ChatPromptTemplate.from_messages([
                 ("system",
-                 "You are an expert assistant. Answer the user's questions based on the provided context. If the context doesn't have the answer, say so.\n\nContext:\n{context}"),
+                 "You are an expert assistant. Answer the user's questions. If you don't know, say so."),
                 MessagesPlaceholder(variable_name="chat_history"),
                 ("user", "{input}"),
             ])
-            question_answer_chain = create_stuff_documents_chain(
-                self.llm, rag_prompt)
-            # We wrap this in a runnable with history to make it conversational
+
+            chain = prompt | self.llm
             self.rag_chain_with_history = RunnableWithMessageHistory(
-                question_answer_chain,
+                chain,
                 self.get_session_history,
                 input_messages_key="input",
                 history_messages_key="chat_history",
-                output_messages_key="answer"
             )
-
         except Exception as e:
-            # This will catch errors like Ollama not running
+            self.rag_chain_with_history = None
             self.error_occurred.emit(
                 f"Initialization Error: {e}\n\nPlease ensure Ollama is running.")
 
@@ -85,71 +205,10 @@ class LLMHandler(QObject):
             file_name = os.path.basename(file_path)
             self.emit_status(f"Processing file: {file_name}...")
 
-            if file_path.lower().endswith('.csv'):
-                self.process_csv_file(file_path, room_name)
-                return
-
-            # 1. Load the document
-            loader = TextLoader(file_path)
-            docs = loader.load()
-
-            # 2. Split the document into chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000, chunk_overlap=200)
-            splits = text_splitter.split_documents(docs)
-
-            # 3. Create a vector store from the chunks
-            vectorstore = FAISS.from_documents(
-                documents=splits, embedding=self.embeddings)
-
-            # 4. Create a retriever and store it for the current room
-            self.retrievers[room_name] = vectorstore.as_retriever()
-            self.emit_status(
-                f"File '{file_name}' loaded and ready for questions in this room.")
             self.file_processed.emit(
                 f"File '{file_name}' is now context for this room.")
         except Exception as e:
             self.error_occurred.emit(f"File Processing Error: {e}")
-
-    def process_csv_file(self, file_path: str, room_name: str):
-        """
-        Loads a CSV file, analyzes it, and emits analysis and a diagram.
-        """
-        try:
-            df = pd.read_csv(file_path)
-            self.dataframes[room_name] = df  # Store for later analysis
-            analysis = f"CSV Analysis for {os.path.basename(file_path)}\n"
-            analysis += f"Shape: {df.shape}\n\n"
-            analysis += f"Columns: {list(df.columns)}\n\n"
-            analysis += f"Head:\n{df.head().to_string()}\n\n"
-            analysis += f"Describe:\n{df.describe().to_string()}\n"
-            # Plot: histogram of first numeric column
-            numeric_cols = df.select_dtypes(include='number').columns
-            img_bytes = b''
-            if len(numeric_cols) > 0:
-                col = numeric_cols[0]
-                plt.figure(figsize=(6, 4))
-                df[col].hist(bins=20)
-                plt.title(f"Histogram of {col}")
-                plt.xlabel(col)
-                plt.ylabel("Frequency")
-                buf = BytesIO()
-                plt.tight_layout()
-                plt.savefig(buf, format='png')
-                plt.close()
-                buf.seek(0)
-                img_bytes = buf.read()
-                buf.close()
-                self.emit_status(
-                    f"CSV file loaded. Analysis and diagram ready.")
-            else:
-                self.emit_status(
-                    f"CSV file loaded. No numeric columns for plotting.")
-            self.csv_analyzed.emit(analysis, img_bytes)
-            self.file_processed.emit(
-                f"CSV file '{os.path.basename(file_path)}' analyzed and diagram generated.")
-        except Exception as e:
-            self.error_occurred.emit(f"CSV Processing Error: {e}")
 
     @pyqtSlot(str, str)
     def get_response(self, user_input: str, room_name: str):
@@ -158,35 +217,28 @@ class LLMHandler(QObject):
         """
         try:
             self.emit_status("Thinking (with context)...")
-            if room_name not in self.retrievers:
-                # Initialize with a dummy document to avoid errors
-                from langchain_core.documents import Document
-                dummy_doc = Document(page_content=" ", metadata={"room": room_name})
-                vectorstore = FAISS.from_documents(
-                    documents=[dummy_doc], embedding=self.embeddings)
-                self.retrievers[room_name] = vectorstore.as_retriever()
-            retriever = self.retrievers[room_name]
-            # Use invoke instead of get_relevant_documents (deprecation fix)
-            relevant_docs = retriever.invoke(user_input)
-            # Run the chain with the retrieved context
-            chain = self.rag_chain_with_history
-            response = chain.invoke(
-                {"input": user_input, "context": relevant_docs},
+            if self.rag_chain_with_history is None:
+                self.error_occurred.emit(
+                    "LLM is not initialized. Please ensure Ollama is running and try again.")
+                return
+            # Always use chat history for Q&A
+            response = self.rag_chain_with_history.invoke(
+                {"input": user_input},
                 config={"configurable": {"session_id": room_name}}
             )
-            print("Chain response:", response)  # Debugging: see what keys are present
-            # Fix: Only call .get() if response is a dict
-            if isinstance(response, dict):
-                answer = response.get('answer') or response.get('output') or str(response)
-            else:
-                answer = str(response)
+
+            answer = response.content if hasattr(
+                response, 'content') else str(response)
             self.response_ready.emit(answer)
             # Store prompt and response in chat history
             history = self.get_session_history(room_name)
             history.add_user_message(user_input)
             history.add_ai_message(answer)
         except Exception as e:
-            self.error_occurred.emit(f"LLM Error: {e}")
+
+            tb = traceback.format_exc()
+            self.error_occurred.emit(
+                f"LLM Error: {e}\nFile: {__file__}\nTraceback:\n{tb}")
 
     def emit_status(self, message: str):
         """Helper to emit a status update."""
