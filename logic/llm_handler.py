@@ -13,7 +13,7 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 import pandas as pd
 # Import plotting interface and registry from plotting.py
-from .plotting import PlotRegistry, histogram_plot
+from .plotting import PlotRegistry, ffthist_plot, histogram_plot, scatter_plot, timeseries_plot
 
 
 class LLMHandler(QObject):
@@ -36,7 +36,7 @@ class LLMHandler(QObject):
 Your task is to determine the user's intent and respond ONLY with a JSON object in the following format:
 {
   "action": "plot" | "ml_model" | "chat",
-  "plot_type": <type, if action is plot, e.g. 'histogram', 'scatter', or null>,
+  "plot_type": <type, if action is plot, e.g. 'histogram', 'scatter', 'timeseries', 'frequency_domain' or null>,
   "features": [<list of feature/column names, if relevant, else empty list>],
   "model_type": <type, if action is ml_model, e.g. 'logistic_regression', 'decision_tree', or null>,
   "explanation": <short explanation of your reasoning>
@@ -164,6 +164,9 @@ Respond ONLY with the JSON object, no extra text.
         self.model_name = model_name
         self.plot_registry = PlotRegistry()
         self.plot_registry.register("histogram", histogram_plot)
+        self.plot_registry.register("scatter", scatter_plot)
+        self.plot_registry.register("timeseries", timeseries_plot)
+        self.plot_registry.register("frequency_domain", ffthist_plot)
         self.llm = None
         self.rag_chain_with_history = None
         self._init_llm_and_chain()
