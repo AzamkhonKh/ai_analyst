@@ -11,9 +11,12 @@ import base64
 import numpy as np
 
 # --- Plotting Interface and Registry ---
+
+
 class PlotFunction(Protocol):
     def __call__(self, df: pd.DataFrame, feature: str) -> str:
         ...
+
 
 class PlotRegistry:
     def __init__(self):
@@ -24,6 +27,7 @@ class PlotRegistry:
 
     def get(self, plot_type: str) -> PlotFunction:
         return self._registry.get(plot_type)
+
 
 # Show Feature Force with Shap after Random Forest
 def plot_shap_feature_force(df: pd.DataFrame) -> str:
@@ -90,6 +94,7 @@ def histogram_plot(df: pd.DataFrame, feature: str) ->  str:
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     color_ok = colors[0 % len(colors)]
     color_ko = colors[1 % len(colors)]
+
     # for col in feature_columns:
     plt.figure(figsize=(6, 4))        
 
@@ -306,7 +311,7 @@ def ffthist_plot(df: pd.DataFrame, feature: str, time_feature: str) ->  str:
 
     html = ""
     # HTML string with embedded image
-    
+
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     color_ok = colors[0 % len(colors)]
     color_ko = colors[1 % len(colors)]
