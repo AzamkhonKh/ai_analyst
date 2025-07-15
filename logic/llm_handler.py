@@ -13,49 +13,65 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts.chat import ChatPromptTemplate, MessagesPlaceholder
 import pandas as pd
 # Import plotting interface and registry from plotting.py
-from .plotting import PlotRegistry, ffthist_plot, histogram_plot, scatter_plot, timeseries_plot
+from .plotting import PlotRegistry, ffthist_plot, histogram_plot, plot_all_ffthist, plot_all_histograms, plot_all_scatter_plots, plot_all_timeseries, plot_shap_feature_force, scatter_plot, timeseries_plot
 
 
 class LLMHandler(QObject):
 
-    def get_response_with_context(self, user_input: str, room_name: str, file_path: str = None):
+    def get_response_with_context(self, user_input: str, room_name: str, file_path: str = None, save_history: bool = True):
         """
         Handles user input with extra context (room, file). Decides whether to answer with a message or perform an action (e.g., plotting, modeling).
         """
         try:
             self.emit_status("Thinking (with context and file)...")
+            # Get previous 3 messages for this room (if any)
+            history = self.get_session_history(room_name)
+            prev_msgs = history.messages[-3:] if len(
+                history.messages) >= 3 else history.messages[:]
+            prev_msgs_text = "\n".join([
+                f"{msg.type.capitalize()}: {msg.content}" for msg in prev_msgs
+            ]) if prev_msgs else ""
+
             # Improved prompt for LLM intent and action detection
             prompt_value = (
                 f"You are an expert assistant for a data analysis app.\n"
                 f"User prompt: {user_input}\n"
             )
+            if prev_msgs_text:
+                prompt_value += f"Previous messages (most recent last):\n{prev_msgs_text}\n"
             if file_path:
                 prompt_value += f"A file named '{os.path.basename(file_path)}' is available.\n"
+            # Add possible features (columns) if available
+            if room_name in self.dataframes:
+                columns = list(self.dataframes[room_name].columns)
+                features_hint = f"- Possible features (columns) in the dataset: {columns}\n"
+            else:
+                features_hint = ""
             prompt_value += (
-                """
+                f"""
 Your task is to determine the user's intent and respond ONLY with a JSON object in the following format:
-{
+{{
   "action": "plot" | "ml_model" | "chat",
   "plot_type": <type, if action is plot, e.g. 'histogram', 'scatter', 'timeseries', 'frequency_domain' or null>,
   "features": [<list of feature/column names, if relevant, else empty list>],
   "model_type": <type, if action is ml_model, e.g. 'logistic_regression', 'decision_tree', or null>,
   "explanation": <short explanation of your reasoning>
-}
+}}
 
 Actions:
 - If the user wants to visualize data (e.g., plot, diagram, chart), set action to "plot" and specify plot_type and features.
 - If the user wants to create, train, or use a machine learning model, set action to "ml_model" and specify model_type and features.
 - If the user just wants to chat or ask a question, set action to "chat" and leave other fields null or empty.
-
+{features_hint}
 Examples:
 User: Show a histogram of column 'age'.
-Response: {"action": "plot", "plot_type": "histogram", "features": ["age"], "model_type": null, "explanation": "User requested a histogram plot of 'age'."}
+Response: {{"action": "plot", "plot_type": "histogram", "features": ["age"], "model_type": null, "explanation": "User requested a histogram plot of 'age'."}}
 
 User: Train a decision tree to classify health status.
-Response: {"action": "ml_model", "plot_type": null, "features": ["health_status"], "model_type": "decision_tree", "explanation": "User wants to train a decision tree model for health status classification."}
+Response: {{"action": "ml_model", "plot_type": null, "features": ["health_status"], "model_type": "decision_tree", "explanation": "User wants to train a decision tree model for health status classification."}}
 
 User: What is a neural network?
-Response: {"action": "chat", "plot_type": null, "features": [], "model_type": null, "explanation": "User is asking a general question."}
+Response: {{"action": "chat", "plot_type": null, "features": [], "model_type": null, "explanation": "User is asking a general question."}}
 
 Respond ONLY with the JSON object, no extra text.
 """
@@ -78,40 +94,50 @@ Respond ONLY with the JSON object, no extra text.
             action = intent_json.get("action")
             plot_type = intent_json.get("plot_type")
             features = intent_json.get("features") or []
+            # If user asks for all features, treat as empty (meaning all)
+            if isinstance(features, list) and len(features) == 1 and str(features[0]).strip().lower() in {"all", "*", "all features"}:
+                features = []
             model_type = intent_json.get("model_type")
             explanation = intent_json.get("explanation")
 
             # Handle plotting
-            if action == "plot":
-                if not file_path or room_name not in self.dataframes:
-                    self.response_ready.emit("No file loaded for plotting.")
+            match action:
+                case "plot":
+                    if not file_path or room_name not in self.dataframes:
+                        self.response_ready.emit(
+                            "No file loaded for plotting.")
+                        return
+                    df = self.dataframes[room_name]
+                    if not plot_type:
+                        self.response_ready.emit(
+                            "Could not determine plot type or features. Please specify the column name and plot type.")
+                        return
+                    # Only use the first feature for now (extend as needed)
+                    html = self.handle_plot(plot_type, df, features)
+                    self.response_ready.emit(html)
+                    if save_history:
+                        history = self.get_session_history(room_name)
+                        history.add_user_message(user_input)
+                        history.add_ai_message(html)
+                case "ml_model":
+                    msg = f"[ML MODEL] Would create model '{model_type}' using features {features}. (Not yet implemented)"
+                    self.response_ready.emit(msg)
+                    if save_history:
+                        history = self.get_session_history(room_name)
+                        history.add_user_message(user_input)
+                        history.add_ai_message(msg)
+                case "chat":
+                    self.get_response(user_input, room_name,
+                                      save_history=save_history)
                     return
-                df = self.dataframes[room_name]
-                if not features or not plot_type:
+                case default:
                     self.response_ready.emit(
-                        "Could not determine plot type or features. Please specify the column name and plot type.")
-                    return
-                # Only use the first feature for now (extend as needed)
-                feature = features[0] if isinstance(
-                    features, list) and features else features
-                self.handle_plot(plot_type, df, feature, file_path)
-                return
-
-            # Handle ML model creation/training
-            if action == "ml_model":
-                # Placeholder: implement ML model logic here
-                msg = f"[ML MODEL] Would create model '{model_type}' using features {features}. (Not yet implemented)"
-                self.response_ready.emit(msg)
-                return
-
-            # Handle chat/default
-            if action == "chat":
-                self.get_response(user_input, room_name)
-                return
-
-            # Fallback: unknown action
-            self.response_ready.emit(
-                f"Unknown action: {action}. Explanation: {explanation}")
+                        f"Unknown action: {action}. Explanation: {explanation}")
+                    if save_history:
+                        history = self.get_session_history(room_name)
+                        history.add_user_message(user_input)
+                        history.add_ai_message(
+                            f"Unknown action: {action}. Explanation: {explanation}")
             return
         except Exception as e:
             tb = traceback.format_exc()
@@ -128,26 +154,48 @@ Respond ONLY with the JSON object, no extra text.
                 return col
         return None
 
-    def handle_plot(self, plot_type: str, df: pd.DataFrame, feature: str, file_path: str):
+    def handle_plot(self, plot_type: str, df: pd.DataFrame, features: str | list | None) -> str:
         """
         Extensible plot handler using registry. Add new plot types by registering them.
+        Returns HTML string for the plot or error message.
         """
         try:
-            plot_func = self.plot_registry.get(plot_type)
-            if plot_func is None:
-                self.response_ready.emit(
-                    f"Plot type '{plot_type}' is not supported.")
-                return
-            # Only pass file_path if the plot function supports it
-            import inspect
-            params = inspect.signature(plot_func).parameters
-            if len(params) == 3:
-                html = plot_func(df, feature, file_path)
+            plot_entry = self.plot_registry.get(plot_type)
+            if plot_entry is None:
+                return f"Plot type '{plot_type}' is not supported."
+
+            # Determine which plot function to use
+            if features is None or (isinstance(features, list) and len(features) == 0):
+                plot_func = plot_entry.get('all')
             else:
-                html = plot_func(df, feature)
-            self.response_ready.emit(html)
+                plot_func = plot_entry.get('feature')
+            if plot_func is None:
+                return f"Plot function for type '{plot_type}' is not registered."
+
+            # Call the plot function efficiently
+            if plot_type == "histogram":
+                if isinstance(features, list) and features:
+                    return "".join([plot_func(df=df, feature=f) for f in features])
+                elif features:
+                    return plot_func(df=df, feature=features)
+                else:
+                    return plot_func(df=df)
+            elif plot_type == "scatter":
+                if isinstance(features, list) and len(features) >= 2:
+                    result = ""
+                    for idx, f1 in enumerate(features):
+                        for f2 in features[idx+1:]:
+                            result += plot_func(df, f1, f2)
+                    return result
+                else:
+                    return "I need at least 2 features to make a scatter diagram."
+            elif plot_type == "timeseries" or plot_type == "frequency_domain":
+                return plot_func(df=df, feature=features)
+            else:
+                return plot_func(df=df)
         except Exception as e:
             self.error_occurred.emit(f"Plotting Error: {e}")
+            return f"Plotting Error: {e}"
     """
     Handles all LLM-related operations, including chat and document retrieval.
     Runs on a separate thread to avoid freezing the GUI.
@@ -163,10 +211,14 @@ Respond ONLY with the JSON object, no extra text.
         self.dataframes = {}     # Store loaded DataFrames for each room
         self.model_name = model_name
         self.plot_registry = PlotRegistry()
-        self.plot_registry.register("histogram", histogram_plot)
-        self.plot_registry.register("scatter", scatter_plot)
-        self.plot_registry.register("timeseries", timeseries_plot)
-        self.plot_registry.register("frequency_domain", ffthist_plot)
+        self.plot_registry.register(
+            "histogram", histogram_plot, plot_all_histograms)
+        self.plot_registry.register(
+            "scatter", scatter_plot, plot_all_scatter_plots)
+        self.plot_registry.register(
+            "timeseries", timeseries_plot, plot_all_timeseries)
+        self.plot_registry.register(
+            "frequency_domain", ffthist_plot, plot_all_ffthist)
         self.llm = None
         self.rag_chain_with_history = None
         self._init_llm_and_chain()
@@ -232,6 +284,8 @@ Respond ONLY with the JSON object, no extra text.
                 f"Detected columns: {headers}\n"
                 f"Dataset shape: {shape[0]} rows × {shape[1]} columns."
             )
+            msg += plot_shap_feature_force(df=df)
+
             self.file_processed.emit(msg)
         except Exception as e:
             tb = traceback.format_exc()
@@ -239,7 +293,7 @@ Respond ONLY with the JSON object, no extra text.
                 f"File Processing Error: {e}\nFile: {__file__}\nTraceback:\n{tb}")
 
     @pyqtSlot(str, str)
-    def get_response(self, user_input: str, room_name: str):
+    def get_response(self, user_input: str, room_name: str, save_history: bool = True):
         """
         Handles user input, retrieves relevant context using the retriever, and gets a response from the LLM chain. If no context is loaded, initializes the room with a dummy retriever. Stores both user prompts and LLM responses in the chat history for each room.
         """
@@ -258,10 +312,10 @@ Respond ONLY with the JSON object, no extra text.
             answer = response.content if hasattr(
                 response, 'content') else str(response)
             self.response_ready.emit(answer)
-            # Store prompt and response in chat history
-            history = self.get_session_history(room_name)
-            history.add_user_message(user_input)
-            history.add_ai_message(answer)
+            if save_history:
+                history = self.get_session_history(room_name)
+                history.add_user_message(user_input)
+                history.add_ai_message(answer)
         except Exception as e:
 
             tb = traceback.format_exc()
