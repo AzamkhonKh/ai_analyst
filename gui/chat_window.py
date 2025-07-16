@@ -6,6 +6,9 @@ from gui.chat_display_panel import ChatDisplayPanel
 from gui.input_panel import InputPanel
 import base64
 from enum import Enum
+from logic.model_training import train_logistic_regression
+import pandas as pd
+
 
 class Models(Enum):
     DEEPSEEK = "deepseek-r1:7b"
@@ -108,13 +111,39 @@ class ChatWindow(QMainWindow):
         if file_path:
             self.toggle_inputs(False)
             self.update_status(f"Processing file: {file_path}...")
-            # Share file path and current room with LLM handler
             self.llm_handler.process_file(file_path, self.current_room)
-            # Optionally, store last uploaded file for this room
             if not hasattr(self, 'room_files'):
                 self.room_files = {}
             self.room_files[self.current_room] = file_path
 
+            # Model training and result display
+            try:
+                df = pd.read_csv(file_path)
+                model, report, acc, importance = train_logistic_regression(df)
+
+                def importance_to_html_table(importance):
+                    html = "<table border='1' cellspacing='0' cellpadding='4' style='font-size:12px;'>"
+                    html += "<tr><th>Feature</th><th>Coefficient</th></tr>"
+                    for _, row in importance.iterrows():
+                        html += f"<tr><td>{row['feature']}</td><td>{row['coefficient']:.5f}</td></tr>"
+                    html += "</table>"
+                    return html
+
+                message = (
+                    "<div style='font-size:15px;'><b>Logistic Regression Results</b></div><hr>"
+                    "<div style='font-size:13px;'><b>Classification Report:</b></div>"
+                    f"<pre style='font-size:12px; background:#f5f5f5; border:1px solid #eee; padding:6px;'>{report}</pre>"
+                    f"<div style='font-size:13px;'><b>Accuracy:</b> "
+                    f"<span style='color:navy;font-weight:bold;'>{acc:.2%}</span></div><br>"
+                    "<div style='font-size:13px;'><b>Most Discriminative Features:</b></div>"
+                    f"{importance_to_html_table(importance)}"
+                )
+                self.chat_display_panel.append_message("System", message)
+            except Exception as e:
+                self.chat_display_panel.append_message(
+                    "System",
+                    f"<b>Model training failed:</b> {str(e)}"
+                )
     def handle_response(self, response_text: str):
         self.chat_display_panel.append_message("LLM", response_text)
         self.toggle_inputs(True)
