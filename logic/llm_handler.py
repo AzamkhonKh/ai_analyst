@@ -191,7 +191,10 @@ Respond ONLY with the JSON object, no extra text.
                 else:
                     return "I need at least 2 features to make a scatter diagram."
             elif plot_type == "timeseries" or plot_type == "frequency_domain":
-                return plot_func(df=df, feature=features)
+                # Check for 'time' column in DataFrame
+                if "time" not in df.columns:
+                    return "Error: The dataset does not contain a 'time' column required for timeseries or frequency domain plots."
+                return plot_func(df=df, feature=features, time_feature="time")
             else:
                 return plot_func(df=df)
         except Exception as e:
