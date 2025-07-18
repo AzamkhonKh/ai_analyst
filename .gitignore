@@ -4,3 +4,8 @@ __pycache__
 
 *.csv
 plot_report.html
+
+fp-sns-datalog1/
+Sensor_STWIN/
+
+!vel_fissa_PMS_400rpm_HTS221.csv

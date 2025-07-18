@@ -26,8 +26,9 @@ class LLMHandler(QObject):
             self.emit_status("Thinking (with context and file)...")
             # Get previous 3 messages for this room (if any)
             history = self.get_session_history(room_name)
-            prev_msgs = history.messages[-3:] if len(
-                history.messages) >= 3 else history.messages[:]
+            prev_msgs = []
+            # prev_msgs = history.messages[-3:] if len(
+            #     history.messages) >= 3 else history.messages[:]
             prev_msgs_text = "\n".join([
                 f"{msg.type.capitalize()}: {msg.content}" for msg in prev_msgs
             ]) if prev_msgs else ""
