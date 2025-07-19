@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from io import BytesIO
-from typing import Protocol
+from typing import Protocol, Callable
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestClassifier
 import shap
@@ -34,14 +34,32 @@ class PlotRegistry:
         return self._registry.get(plot_type)
 
 
+def apply_operators(df: pd.DataFrame, operators: dict[str,Callable]) -> pd.DataFrame:
+    df = df.copy()
+    for col in df.columns:
+        for op_name, func in operators.items():
+            new_col_name = f"{op_name}_of_{col}"
+            df[new_col_name] = func(df[col])
+    return df
 # Show Feature Force with Shap after Random Forest
 def plot_shap_feature_force(df: pd.DataFrame) -> str:
     max_rows = 15
+    window = int(len(df) / 100) if len(df) > 100 else 1
+    w_estimators = {
+        "mov_avg": lambda x: x.rolling(window=100, center=True).mean(),
+        "mov_std": lambda x: x.rolling(window=100, center=True).std(),
+        "mov_min": lambda x: x.rolling(window=100, center=True).min(),
+        "mov_max": lambda x: x.rolling(window=100, center=True).max(),
+        "mov_median": lambda x: x.rolling(window=100, center=True).median(),
+        "skew": lambda x: x.rolling(window=100, center=True).apply(lambda y: y.skew(), raw=False)
+    }
     feature_columns = [col for col in df.columns if col != "label"]
     html = ""
     # train a Random Forest
     df = df.copy()
     X = df[feature_columns]
+    X = (X - X.mean()) / X.std()  # Standardize features
+    X = apply_operators(X, w_estimators)
     label_map = {"OK": 1, "KO": 0}
     y = df["label"].map(label_map)
 
@@ -201,8 +219,10 @@ def scatter_plot(df: pd.DataFrame, feature1: str, feature2: str) -> str:
     X_ko = df_ko[feature1].values.reshape(-1, 1)
     y_ko = df_ko[feature2].values
     model_ko.fit(X_ko, y_ko)
-    x_vals_ko = np.linspace(df_ko[feature1].min(
-    ), df_ko[feature1].max(), 100).reshape(-1, 1)
+    ko_min = df_ko[feature1].min()
+    ko_max = df_ko[feature1].max()
+    ko_margin = (ko_max - ko_min) * .05  # 5% margin
+    x_vals_ko = np.linspace(ko_min - ko_margin, ko_max + ko_margin, 100).reshape(-1, 1)
     y_vals_ko = model_ko.predict(x_vals_ko)
     plt.plot(x_vals_ko, y_vals_ko, color=color_ko,
              alpha=0.6, linestyle='-', linewidth=1.5)
@@ -212,8 +232,10 @@ def scatter_plot(df: pd.DataFrame, feature1: str, feature2: str) -> str:
     X_ok = df_ok[feature1].values.reshape(-1, 1)
     y_ok = df_ok[feature2].values
     model_ok.fit(X_ok, y_ok)
-    x_vals_ok = np.linspace(df_ok[feature1].min(
-    ), df_ok[feature1].max(), 100).reshape(-1, 1)
+    ok_min = df_ok[feature1].min()
+    ok_max = df_ok[feature1].max()
+    ok_margin = (ok_max - ok_min) * .05  # 5% margin
+    x_vals_ok = np.linspace(ok_min - ok_margin, ok_max + ok_margin, 100).reshape(-1, 1)
     y_vals_ok = model_ok.predict(x_vals_ok)
     plt.plot(x_vals_ok, y_vals_ok, color=color_ok,
              alpha=0.6, linestyle='-', linewidth=1.5)
@@ -252,7 +274,7 @@ def plot_all_timeseries(df: pd.DataFrame, time_feature: str | None = None) -> st
 
 def timeseries_plot(df: pd.DataFrame, feature: str, time_feature: str | None = None) -> str:
     max_rows = 1500
-    window = int(len(df) / 100)
+    window = int(len(df) / 100) if len(df) > 100 else 1
     # feature_columns = [col for col in df.columns if col != "label"]
     if time_feature is None:
         time_feature = "__time__"
