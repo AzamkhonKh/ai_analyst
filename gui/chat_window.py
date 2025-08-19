@@ -10,6 +10,7 @@ from logic.model_training import train_logistic_regression
 import pandas as pd
 
 
+
 class Models(Enum):
     DEEPSEEK = "deepseek-r1:7b"
     LLAMA = "llama3.1:8b"
@@ -96,10 +97,12 @@ class ChatWindow(QMainWindow):
         self.toggle_inputs(False)
         self.update_status("LLM is thinking...")
         # Pass extra context: file path and room name
-        file_path = getattr(self, 'room_files', {}).get(self.current_room, None)
+        file_path = getattr(self, 'room_files', {}).get(
+            self.current_room, None)
         # If LLM handler supports extra context, pass it; else fallback
         if hasattr(self.llm_handler, 'get_response_with_context'):
-            self.llm_handler.get_response_with_context(user_text, self.current_room, file_path)
+            self.llm_handler.get_response_with_context(
+                user_text, self.current_room, file_path, save_history=True)
         else:
             self.llm_handler.get_response(user_text, self.current_room)
 
