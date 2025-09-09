@@ -135,9 +135,9 @@ class ChatWindow(QMainWindow):
                 message = (
                     "<div style='font-size:15px;'><b>Logistic Regression Results</b></div><hr>"
                     "<div style='font-size:13px;'><b>Classification Report:</b></div>"
-                    f"<pre style='font-size:12px; background:#f5f5f5; border:1px solid #eee; padding:6px;'>{report}</pre>"
+                    f"<pre style='font-size:12px; border:1px solid #eee; padding:6px;'>{report}</pre>"
                     f"<div style='font-size:13px;'><b>Accuracy:</b> "
-                    f"<span style='color:navy;font-weight:bold;'>{acc:.2%}</span></div><br>"
+                    f"<span style='font-weight:bold;'>{acc:.2%}</span></div><br>"
                     "<div style='font-size:13px;'><b>Most Discriminative Features:</b></div>"
                     f"{importance_to_html_table(importance)}"
                 )
